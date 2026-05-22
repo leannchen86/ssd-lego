@@ -1,6 +1,6 @@
 // ui.js — DOM-based UI panels
 // Server selector, bay config, workload, RAID, drive palette, stats, insights, drive info
-import { EventBus, RAID_MODES, buildBays } from './state.js?v=43';
+import { EventBus, RAID_MODES, buildBays } from './state.js?v=44';
 
 // NVMe is backwards compatible — PCIe 4 drives work in PCIe 5 bays
 function interfaceCompatible(driveIf, bayIf) {
@@ -87,7 +87,7 @@ export class UI {
 
     if (owned.length) {
       const g = document.createElement('optgroup');
-      g.label = 'REUSE / OWNED SERVERS';
+      g.label = 'OWNED SERVERS';
       owned.forEach(s => {
         const o = document.createElement('option');
         o.value = s.id;
@@ -99,7 +99,7 @@ export class UI {
 
     if (available.length) {
       const g = document.createElement('optgroup');
-      g.label = 'NEW PURCHASE OPTIONS';
+      g.label = 'NEW OPTIONS';
       available.forEach(s => {
         const o = document.createElement('option');
         o.value = s.id;
@@ -111,7 +111,7 @@ export class UI {
 
     if (reference.length) {
       const g = document.createElement('optgroup');
-      g.label = 'REFERENCE / WHAT-IF CHASSIS';
+      g.label = 'REFERENCE';
       reference.forEach(s => {
         const o = document.createElement('option');
         o.value = s.id;
