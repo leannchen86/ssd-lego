@@ -9,13 +9,12 @@ Live demo: [leannchen86.github.io/ssd-rack-sim](https://leannchen86.github.io/ss
 Run from the project root:
 
 ```bash
-source .venv/bin/activate
-python3 -m http.server 8080
+bun run dev
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
 
-There is no build step for the app. It uses plain ES modules, Canvas 2D, and Tailwind from a CDN.
+There is no build step for the app. It uses plain ES modules, Canvas 2D, Tailwind from a CDN, and a tiny Bun static dev server. Refresh the browser after edits.
 
 ## What It Models
 

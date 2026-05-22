@@ -22,7 +22,7 @@ module.exports = defineConfig({
     },
   ],
   webServer: {
-    command: 'python3 -m http.server 8080',
+    command: 'bun run dev',
     url: 'http://localhost:8080/lego.html',
     reuseExistingServer: true,
     timeout: 10_000,
