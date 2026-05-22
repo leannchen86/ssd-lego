@@ -19,7 +19,7 @@ There is no build step for the app. It uses plain ES modules, Canvas 2D, and Tai
 
 ## What It Models
 
-- Owned Dell fleet reuse vs new Dell/Supermicro/reference purchase options
+- Owned Dell fleet reuse vs new Dell/Supermicro purchase options, plus reference what-if M.2 chassis
 - SATA and native M.2 NVMe bay compatibility, including PCIe generation fallback
 - RAID0, RAID1, RAID5, RAID10, and JBOD capacity/performance tradeoffs
 - Workload fit for archive, search/web serving, low-latency app data, and AI scratch use cases

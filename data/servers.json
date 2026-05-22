@@ -150,7 +150,7 @@
   },
   {
     "id": "ref-m2-nvme-8bay",
-    "name": "Reference M.2 NVMe Server",
+    "name": "Reference 8-bay M.2 NVMe chassis",
     "vendor": "Reference",
     "formUnit": "2U",
     "generation": "current",
@@ -175,7 +175,7 @@
   },
   {
     "id": "ref-m2-nvme-24bay",
-    "name": "High-Density M.2 NVMe Server",
+    "name": "Reference 24-bay M.2 NVMe chassis",
     "vendor": "Reference",
     "formUnit": "2U",
     "generation": "current",

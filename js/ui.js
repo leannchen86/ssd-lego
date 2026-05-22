@@ -1,6 +1,6 @@
 // ui.js — DOM-based UI panels
 // Server selector, bay config, workload, RAID, drive palette, stats, insights, drive info
-import { EventBus, RAID_MODES, buildBays } from './state.js?v=42';
+import { EventBus, RAID_MODES, buildBays } from './state.js?v=43';
 
 // NVMe is backwards compatible — PCIe 4 drives work in PCIe 5 bays
 function interfaceCompatible(driveIf, bayIf) {
@@ -74,10 +74,16 @@ export class UI {
     const sel = this.els.serverSelect;
     sel.innerHTML = '<option value="">— pick a server —</option>';
 
-    // Group by owned vs new
+    // Group by owned, branded purchase options, and generic what-if chassis.
     const visibleServers = this._retailCompatibleServers();
     const owned = visibleServers.filter(s => s.owned);
-    const available = visibleServers.filter(s => !s.owned);
+    const available = visibleServers.filter(s => !s.owned && s.vendor !== 'Reference');
+    const reference = visibleServers.filter(s => !s.owned && s.vendor === 'Reference');
+    const serverLabel = (s) => {
+      const firstConfig = this._supportedBayConfigs(s)[0];
+      const bays = firstConfig ? firstConfig.name : `${s.bays[0].count}× ${s.bays[0].formFactor}`;
+      return `${s.name}  (${s.formUnit}, ${bays})`;
+    };
 
     if (owned.length) {
       const g = document.createElement('optgroup');
@@ -85,7 +91,7 @@ export class UI {
       owned.forEach(s => {
         const o = document.createElement('option');
         o.value = s.id;
-        o.textContent = `${s.name}  (${s.formUnit}, ${s.bays[0].count}× ${s.bays[0].formFactor})`;
+        o.textContent = serverLabel(s);
         g.appendChild(o);
       });
       sel.appendChild(g);
@@ -95,11 +101,21 @@ export class UI {
       const g = document.createElement('optgroup');
       g.label = 'NEW PURCHASE OPTIONS';
       available.forEach(s => {
-        const firstConfig = this._supportedBayConfigs(s)[0];
-        const bays = firstConfig ? firstConfig.name : `${s.bays[0].count}× ${s.bays[0].formFactor}`;
         const o = document.createElement('option');
         o.value = s.id;
-        o.textContent = `${s.name}  ($${s.priceUSD.toLocaleString()}, ${bays})`;
+        o.textContent = serverLabel(s);
+        g.appendChild(o);
+      });
+      sel.appendChild(g);
+    }
+
+    if (reference.length) {
+      const g = document.createElement('optgroup');
+      g.label = 'REFERENCE / WHAT-IF CHASSIS';
+      reference.forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.id;
+        o.textContent = serverLabel(s);
         g.appendChild(o);
       });
       sel.appendChild(g);
