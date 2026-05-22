@@ -76,6 +76,21 @@
       min-width: 240px;
     }
 
+    .panel-sticky {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      margin: -10px -10px 10px;
+      padding: 10px 10px 8px;
+      background: linear-gradient(180deg, #111827 0%, #111827 88%, rgba(17, 24, 39, 0.94) 100%);
+      border-bottom: 1px solid rgba(31, 41, 55, 0.95);
+      box-shadow: 0 12px 20px rgba(0, 0, 0, 0.26);
+    }
+
+    .panel-sticky > :last-child {
+      margin-bottom: 0;
+    }
+
     .sidebar-tab {
       position: absolute;
       top: 76px;
@@ -984,25 +999,27 @@
     <!-- Left Panel: Server + Controls + Drives -->
     <div id="left-panel" class="panel">
       <div class="panel-inner">
-        <div class="mb-3">
-          <div class="section-title">Server</div>
-          <select id="server-select"></select>
-        </div>
+        <div class="panel-sticky">
+          <div class="mb-3">
+            <div class="section-title">Server</div>
+            <select id="server-select"></select>
+          </div>
 
-        <div id="bay-config-group" class="mb-3" style="display: none;">
-          <div class="section-title">Bay Configuration</div>
-          <select id="bay-config-select"></select>
-        </div>
+          <div id="bay-config-group" class="mb-3" style="display: none;">
+            <div class="section-title">Bay Configuration</div>
+            <select id="bay-config-select"></select>
+          </div>
 
-        <div class="mb-3">
-          <div class="section-title">Use Case</div>
-          <select id="workload-select"></select>
-        </div>
+          <div class="mb-3">
+            <div class="section-title">Use Case</div>
+            <select id="workload-select"></select>
+          </div>
 
-        <div class="mb-3">
-          <div class="section-title">Network Path</div>
-          <select id="network-select"></select>
-          <div id="network-info" class="hint mt-1"></div>
+          <div class="mb-3">
+            <div class="section-title">Network Path</div>
+            <select id="network-select"></select>
+            <div id="network-info" class="hint mt-1"></div>
+          </div>
         </div>
 
         <div class="mb-2">
