@@ -1,6 +1,6 @@
 // ui.js — DOM-based UI panels
 // Server selector, bay config, workload, RAID, drive palette, stats, insights, drive info
-import { EventBus, RAID_MODES, buildBays } from './state.js?v=41';
+import { EventBus, RAID_MODES, buildBays } from './state.js?v=42';
 
 // NVMe is backwards compatible — PCIe 4 drives work in PCIe 5 bays
 function interfaceCompatible(driveIf, bayIf) {
@@ -535,12 +535,6 @@ export class UI {
     compatible.forEach(d => container.appendChild(this._createDriveCard(d, false)));
 
     if (incompatible.length > 0) {
-      if (this.state.server && incompatible.some(d => d.formFactor === 'M.2 2280')) {
-        const note = document.createElement('div');
-        note.className = 'text-blue-300 text-xs p-2 rounded border border-blue-900/60 bg-blue-950/20 font-mono leading-relaxed mt-2';
-        note.textContent = 'M.2 NVMe SSDs need a native M.2 NVMe server; the selected server bays are not M.2 slots.';
-        container.appendChild(note);
-      }
       const div = document.createElement('div');
       div.className = 'text-gray-600 text-xs px-2 py-1 border-t border-gray-800 mt-2 pt-2 font-mono';
       div.textContent = 'INCOMPATIBLE WITH CONFIG';
