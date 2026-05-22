@@ -1,6 +1,6 @@
 # SSD Rack Simulator
 
-A browser-based planning tool for exploring SSD choices in real server chassis. Pick an owned or new server, choose workload and RAID assumptions, place compatible consumer SSDs into bays, and see capacity, cost, bandwidth, endurance, risk, and workload fit update live.
+A browser-based planning tool for exploring SSD choices in real server chassis. Pick an owned or new server, choose a use case and network path, place compatible consumer SSDs into bays, and see capacity, cost, bandwidth, power, bottlenecks, and workload fit update live.
 
 Live demo: [leannchen86.github.io/ssd-rack-sim](https://leannchen86.github.io/ssd-rack-sim/)
 
@@ -21,10 +21,9 @@ There is no build step for the app. It uses plain ES modules, Canvas 2D, and Tai
 
 - Owned Dell fleet reuse vs new Dell/Supermicro purchase options, plus reference what-if M.2 chassis
 - SATA and native M.2 NVMe bay compatibility, including PCIe generation fallback
-- RAID0, RAID1, RAID5, RAID10, and JBOD capacity/performance tradeoffs
 - Workload fit for archive, search/web serving, low-latency app data, and AI scratch use cases
 - Network path caps for 25GbE, 100GbE, 200GbE, or local disk-bound modeling
-- Cost, power/cooling, rebuild exposure, controller/NAND/vendor concentration, and bottlenecks
+- Cost, power, controller/NAND/vendor concentration, and bottlenecks
 - Auto-fill presets for quickly comparing balanced, cheapest, capacity, write-speed, read-speed, endurance, or exact-drive builds
 
 The simulator is meant for planning and comparison, not final procurement or benchmarking. Retail prices are snapshots from the catalog data and may drift quickly.

@@ -24,7 +24,6 @@ export const RAID_MODES = {
 };
 
 const DEFAULT_ELECTRICITY_USD_KWH = 0.12;
-const DEFAULT_PUE = 1.4;
 const DEFAULT_CONSUMER_AFR = 0.01;
 const DEFAULT_UBER = 1e-16;
 const DEFAULT_COOLING_PROFILE = 'stock';
@@ -189,16 +188,6 @@ function estimateDriveAfr(drive) {
   return afr;
 }
 
-function raidWearFactor(mode) {
-  return {
-    RAID0: 1,
-    JBOD: 1,
-    RAID1: 2,
-    RAID10: 2,
-    RAID5: 4,
-  }[mode] || 1;
-}
-
 function degradedRiskMembers(mode, driveCount) {
   if (mode === 'RAID5') return Math.max(0, driveCount - 1);
   if (mode === 'RAID1' || mode === 'RAID10') return driveCount >= 2 ? 1 : 0;
@@ -216,7 +205,7 @@ export function createState() {
     // Selected config
     server: null,
     activeBayConfig: null,   // for servers with multiple bay configs (R7725)
-    raidMode: 'RAID10',
+    raidMode: 'JBOD',
     networkGbpsOverride: null,
     coolingProfile: DEFAULT_COOLING_PROFILE,
     fillStrategy: 'use-case',
@@ -316,8 +305,7 @@ export function computeStats(state) {
       realisticSustainedWriteGBs: 0, writeCliffRatio: 1, slcCacheGB: 0, cacheExhaustMinutes: 0,
       lowQueueReadIOPS: 0, estimatedP99ReadMs: 0,
       drivePotentialReadGBs: 0, platformReadGBs: 0, bottleneckReadGBs: 0,
-      energyCostPerYear: 0, electricityUSDPerKWh: DEFAULT_ELECTRICITY_USD_KWH, pue: DEFAULT_PUE,
-      workloadWriteTBPerDay: 0, minEnduranceYears: Infinity, medianEnduranceYears: Infinity,
+      energyCostPerYear: 0, electricityUSDPerKWh: DEFAULT_ELECTRICITY_USD_KWH,
       expectedFailuresPerYear: 0, rebuildSecondFailureRiskPct: 0, ureDuringRebuildRiskPct: 0,
       controllerVendorConcentration: {}, networkGbps: 0, networkLimitGBs: 0, networkBottleneck: false,
       coolingProfile: DEFAULT_COOLING_PROFILE, thermalLoadW: 0, thermalBudgetW: 0, thermalHeadroomW: 0,
@@ -435,8 +423,7 @@ export function computeStats(state) {
   const modulePower = state.modules.reduce((s, m) => s + (m.thermalLoadW || 0), 0);
   const totalPowerW = server.powerBaseW + drivePower + modulePower;
   const electricityUSDPerKWh = state.workload?.modelAssumptions?.electricityUSDPerKWh || DEFAULT_ELECTRICITY_USD_KWH;
-  const pue = state.workload?.modelAssumptions?.pue || DEFAULT_PUE;
-  const energyCostPerYear = (totalPowerW / 1000) * 24 * 365 * electricityUSDPerKWh * pue;
+  const energyCostPerYear = (totalPowerW / 1000) * 24 * 365 * electricityUSDPerKWh;
 
   const thermal = deriveThermalModel(state, drivePower, modulePower);
   const drivePotentialReadGBs = (chassisReadGBs + modulePotentialReadGBs) * server.realisticBandwidthRatio * thermal.thermalBurstThrottleFactor;
@@ -463,7 +450,7 @@ export function computeStats(state) {
     ? Infinity
     : Number.isFinite(networkOverride)
       ? networkOverride
-      : state.workload?.modelAssumptions?.networkGbps || server.networkGbps || Infinity;
+      : state.workload?.modelAssumptions?.networkGbps || server.networkGbps || 25;
   const networkLimitGBs = Number.isFinite(networkGbps) ? (networkGbps / 8) * 0.92 : Infinity;
   const networkBottleneck = realisticReadGBs > networkLimitGBs * 1.15;
   const bottleneckReadGBs = Math.min(realisticReadGBs, networkLimitGBs);
@@ -495,20 +482,6 @@ export function computeStats(state) {
     rebuildTimeHours = maxDriveTB * 1024 / (effectiveSpeed * 3.6);
     rebuildDegraded = true; // Array is vulnerable during entire rebuild
   }
-
-  const modelAssumptions = state.workload?.modelAssumptions || {};
-  const workloadWriteTBPerDay = modelAssumptions.writeTBPerDay || 0;
-  const workloadWriteAmp = modelAssumptions.writeAmplification || 1;
-  const physicalWriteTBPerDay = workloadWriteTBPerDay * workloadWriteAmp * raidWearFactor(state.raidMode);
-  const enduranceYears = filled.map(b => {
-    if (!physicalWriteTBPerDay || !b.drive.tbw || driveCount === 0) return Infinity;
-    const perDriveTBPerDay = physicalWriteTBPerDay / driveCount;
-    return b.drive.tbw / (perDriveTBPerDay * 365);
-  }).sort((a, b) => a - b);
-  const minEnduranceYears = enduranceYears[0] ?? Infinity;
-  const medianEnduranceYears = enduranceYears.length
-    ? enduranceYears[Math.floor(enduranceYears.length / 2)]
-    : Infinity;
 
   const expectedFailuresPerYear = filled.reduce((s, b) => s + estimateDriveAfr(b.drive), 0);
   const rebuildWindowYears = rebuildTimeHours / (24 * 365);
@@ -550,7 +523,7 @@ export function computeStats(state) {
     platformReadGBs: realisticReadGBs,
     bottleneckReadGBs,
     chassisMaxBWGBs: chassisMaxBW,
-    busSaturated, totalPowerW, energyCostPerYear, electricityUSDPerKWh, pue,
+    busSaturated, totalPowerW, energyCostPerYear, electricityUSDPerKWh,
     coolingProfile: thermal.coolingProfile,
     thermalLoadW: thermal.thermalLoadW,
     thermalBudgetW: thermal.thermalBudgetW,
@@ -562,7 +535,6 @@ export function computeStats(state) {
     rebuildTimeHours, rebuildDegraded, rebuildWarning,
     raidValid, raidError,
     expectedFailuresPerYear, rebuildSecondFailureRiskPct, ureDuringRebuildRiskPct,
-    workloadWriteTBPerDay, minEnduranceYears, medianEnduranceYears,
     vendorConcentration, nandVendorConcentration, controllerVendorConcentration,
     chassisBays, moduleBays,
     unpricedDrives, priceIncomplete,

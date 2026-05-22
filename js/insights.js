@@ -135,21 +135,12 @@ export function generateInsights(state, stats, workload) {
     });
   }
 
-  if (stats.workloadWriteTBPerDay > 0 && Number.isFinite(stats.minEnduranceYears) && stats.minEnduranceYears < 3.5) {
-    insights.push({
-      severity: stats.minEnduranceYears < 2 ? 'critical' : 'warning',
-      category: 'Lifecycle',
-      title: 'TBW lifespan under use case',
-      message: `At ${stats.workloadWriteTBPerDay} TB/day and RAID ${state.raidMode.replace('RAID', '')} write amplification, the weakest drive reaches TBW in ~${stats.minEnduranceYears.toFixed(1)} years.`,
-    });
-  }
-
   if (stats.energyCostPerYear > 0 && stats.energyCostPerYear > Math.max(500, stats.driveCost * 0.08)) {
     insights.push({
       severity: 'info',
       category: 'TCO',
       title: 'Power is material to TCO',
-      message: `Estimated power + cooling cost is ~$${stats.energyCostPerYear.toFixed(0)}/year at $${stats.electricityUSDPerKWh.toFixed(2)}/kWh and ${stats.pue.toFixed(1)} PUE.`,
+      message: `Estimated electricity cost is ~$${stats.energyCostPerYear.toFixed(0)}/year at $${stats.electricityUSDPerKWh.toFixed(2)}/kWh.`,
     });
   }
 

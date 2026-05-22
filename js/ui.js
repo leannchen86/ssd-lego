@@ -1,6 +1,6 @@
 // ui.js — DOM-based UI panels
 // Server selector, bay config, workload, RAID, drive palette, stats, insights, drive info
-import { EventBus, RAID_MODES, buildBays } from './state.js?v=44';
+import { EventBus, RAID_MODES, buildBays } from './state.js?v=46';
 
 // NVMe is backwards compatible — PCIe 4 drives work in PCIe 5 bays
 function interfaceCompatible(driveIf, bayIf) {
@@ -994,22 +994,9 @@ export class UI {
     const workload = this.state.workload;
     const capTarget = workload?.requirements?.minUsableTB || stats.rawTB || 1;
     const capTitle = workload?.requirements?.minUsableTB
-      ? `${stats.usableTB.toFixed(1)} TB usable vs ${workload.requirements.minUsableTB} TB target`
-      : `${stats.usableTB.toFixed(1)} TB usable from ${stats.rawTB.toFixed(1)} TB raw`;
+      ? `${stats.usableTB.toFixed(1)} TB installed vs ${workload.requirements.minUsableTB} TB target`
+      : `${stats.rawTB.toFixed(1)} TB installed`;
     const capColor = workload?.requirements?.minUsableTB && stats.usableTB < workload.requirements.minUsableTB ? '#f59e0b' : '#4fc3f7';
-
-    const raidMeta = stats.raidValid
-      ? { text: 'text-green-400', color: '#22c55e', label: 'VALID' }
-      : { text: 'text-red-400', color: '#ef4444', label: stats.raidError || 'INVALID' };
-    const raidShort = stats.raidValid ? 'VALID' : 'CHECK';
-    const protectionLabels = {
-      RAID10: 'Mirror / Balanced',
-      RAID5: 'Parity / Capacity',
-      RAID1: 'Mirror Pair',
-      RAID0: 'No Redundancy',
-      JBOD: 'Replicated Elsewhere',
-    };
-    const protectionLabel = protectionLabels[this.state.raidMode] || RAID_MODES[this.state.raidMode].name;
 
     const bwMax = Math.max(
       stats.realisticReadGBs,
@@ -1024,8 +1011,6 @@ export class UI {
       this.state.bays.length * 25 +
       this.state.modules.reduce((s, m) => s + (m.thermalLoadW || 0), 0)
     );
-    const rebuildCeiling = Math.max(24, stats.rebuildTimeHours || 0);
-
     const costSegments = [
       { label: `Drives: $${stats.driveCost.toLocaleString()}`, value: stats.driveCost, color: '#4fc3f7' },
       { label: stats.chassisCost > 0 ? `Server: $${stats.chassisCost.toLocaleString()}` : 'Server: owned', value: stats.chassisCost, color: '#8b5cf6' },
@@ -1037,13 +1022,6 @@ export class UI {
       ? `${vendorEntries[0][0]} ${((vendorEntries[0][1] / stats.driveCount) * 100).toFixed(0)}%`
       : 'empty';
     const bayFillPct = this.state.bays.length ? (stats.driveCount / this.state.bays.length) * 100 : 0;
-    const rebuildTone = stats.rebuildWarning ? '#ef4444' : stats.rebuildDegraded ? '#f59e0b' : '#22c55e';
-    const rebuildLabel = stats.rebuildWarning ? 'no rebuild safety' : stats.rebuildDegraded ? 'degraded window' : 'mirror copy';
-    const enduranceYears = Number.isFinite(stats.minEnduranceYears) ? stats.minEnduranceYears : 0;
-    const enduranceLabel = stats.workloadWriteTBPerDay
-      ? `${stats.minEnduranceYears.toFixed(1)} yr`
-      : 'N/A';
-    const enduranceTone = !stats.workloadWriteTBPerDay ? '#64748b' : stats.minEnduranceYears < 2 ? '#ef4444' : stats.minEnduranceYears < 3.5 ? '#f59e0b' : '#22c55e';
     const p99Target = workload?.modelAssumptions?.targetP99ReadMs || Math.max(10, stats.estimatedP99ReadMs || 1);
     const p99Tone = workload?.modelAssumptions?.targetP99ReadMs && stats.estimatedP99ReadMs > p99Target
       ? '#f59e0b'
@@ -1078,21 +1056,14 @@ export class UI {
     `).join('');
     const qd = workload?.modelAssumptions?.typicalQueueDepth || 4;
     const statTerms = {
-      capacity: this._term('CAPACITY', 'Usable capacity', 'Capacity after RAID overhead. Raw capacity is the sum of drive sizes; usable is what remains for data.', [
-        ['Usable', `${stats.usableTB.toFixed(1)} TB`],
+      capacity: this._term('CAPACITY', 'Installed capacity', 'Total SSD capacity in the current build. Data-protection overhead is intentionally not modeled in the headline view right now.', [
+        ['Installed', `${stats.usableTB.toFixed(1)} TB`],
         ['Raw', `${stats.rawTB.toFixed(1)} TB`],
-        ['Protection', protectionLabel],
       ]),
       cost: this._term('COST', 'Purchase and amortized cost', 'Estimated hardware purchase cost plus a simple TB-year view for comparing dense builds.', [
         ['Purchase', this._money(stats.totalCost)],
         ['Drive spend', this._money(stats.driveCost)],
         ['TB-year', `$${stats.costPerUsableTBYear5.toFixed(0)}/TB yr`],
-      ]),
-      raid: this._term('PROTECTION', 'Data protection', 'How the drives are grouped for redundancy and performance. Parity and mirroring reduce usable capacity but change failure behavior.', [
-        ['Layout', protectionLabel],
-        ['Technical', RAID_MODES[this.state.raidMode].name.replace(/\s+\(.+\)/, '')],
-        ['Status', stats.raidValid ? 'valid' : (stats.raidError || 'invalid')],
-        ['Protected', stats.raidValid ? `${stats.driveCount} drives` : 'check drive count'],
       ]),
       bandwidth: this._term('B/W', 'Bandwidth', 'Estimated sequential throughput after chassis limits and RAID effects. W is burst write; S is sustained write after cache behavior.', [
         ['Read', `${stats.realisticReadGBs.toFixed(1)} GB/s`],
@@ -1115,22 +1086,11 @@ export class UI {
         ['Current', `${stats.realisticSustainedWriteGBs.toFixed(1)} GB/s`],
         ['Write cliff', `${(stats.writeCliffRatio * 100).toFixed(0)}% of burst`],
       ], 'compact'),
-      power: this._term('POWER', 'Power and cooling cost', 'Estimated server plus SSD power draw, with yearly electricity cost including the modeled PUE cooling overhead.', [
+      power: this._term('POWER', 'Power cost', 'Estimated server plus SSD power draw and yearly electricity cost. This is a simple planning estimate, not measured wall power.', [
         ['Draw', `${stats.totalPowerW.toFixed(0)} W`],
-        ['Energy', `$${stats.energyCostPerYear.toFixed(0)}/yr`],
-        ['PUE', stats.pue.toFixed(1)],
+        ['Electricity', `$${stats.energyCostPerYear.toFixed(0)}/yr`],
       ]),
-      rebuild: this._term('REBUILD', 'Rebuild window', 'Estimated time to restore redundancy after a drive failure. During this window, another fault can be more serious.', [
-        ['Time', `${stats.rebuildTimeHours.toFixed(1)} h`],
-        ['2nd fault', `${stats.rebuildSecondFailureRiskPct.toFixed(2)}%`],
-        ['URE risk', `${stats.ureDuringRebuildRiskPct.toFixed(2)}%`],
-      ]),
-      wear: this._term('WEAR', 'SSD endurance', 'Estimated lifespan under the selected use-case write rate. Without a use case, there is no write-rate model to project.', [
-        ['Use case', stats.workloadWriteTBPerDay ? `${stats.workloadWriteTBPerDay} TB/day` : 'none selected'],
-        ['Minimum', stats.workloadWriteTBPerDay ? enduranceLabel : 'N/A'],
-        ['Median', stats.workloadWriteTBPerDay ? `${stats.medianEnduranceYears.toFixed(1)} yr` : 'N/A'],
-      ]),
-      latency: this._term('LATENCY', 'Tail latency', 'Heuristic p99 read latency class. This catches cases where aggregate IOPS looks fine but a SATA or QLC-heavy build may still feel slow.', [
+      latency: this._term('LATENCY', 'Latency class', 'Heuristic p99 read latency class. This catches cases where aggregate IOPS looks fine but a SATA or QLC-heavy build may still feel slow.', [
         ['P99', `${stats.estimatedP99ReadMs ? stats.estimatedP99ReadMs.toFixed(1) : '0.0'} ms`],
         ['QD', `queue depth ${qd}`],
         ['IOPS', `${this._compactNumber(stats.lowQueueReadIOPS, 0)} low-QD`],
@@ -1152,11 +1112,11 @@ export class UI {
         <div class="strip-card">
           <div class="flex items-center justify-between gap-2">
             <div class="stat-label">${statTerms.capacity}</div>
-            <span class="status-pill ${capColor === '#f59e0b' ? 'text-yellow-400' : 'text-blue-300'}">${workload?.requirements?.minUsableTB ? 'TARGET' : 'USABLE'}</span>
+            <span class="status-pill ${capColor === '#f59e0b' ? 'text-yellow-400' : 'text-blue-300'}">${workload?.requirements?.minUsableTB ? 'TARGET' : 'TOTAL'}</span>
           </div>
           <div class="strip-value">${stats.usableTB.toFixed(1)} <span class="text-sm text-gray-500">TB</span></div>
           ${this._meter(stats.usableTB, capTarget, capColor, capTitle)}
-          <div class="stat-sub text-gray-500">${stats.rawTB.toFixed(1)} raw</div>
+          <div class="stat-sub text-gray-500">${stats.driveCount} drives installed</div>
         </div>
 
         <div class="strip-card">
@@ -1167,16 +1127,6 @@ export class UI {
           <div class="strip-value">${this._money(stats.totalCost)}${stats.priceIncomplete ? '<span class="text-yellow-500 text-sm">+?</span>' : ''}</div>
           ${this._splitBar(costSegments)}
           <div class="stat-sub text-gray-500">$${stats.costPerUsableTB.toFixed(0)}/TB · $${stats.costPerUsableTBYear5.toFixed(0)}/TB yr</div>
-        </div>
-
-        <div class="strip-card">
-          <div class="flex items-center justify-between gap-2">
-            <div class="stat-label">${statTerms.raid}</div>
-            <span class="status-pill ${raidMeta.text}" title="${this._escapeHtml(raidMeta.label)}">${raidShort}</span>
-          </div>
-          <div class="strip-value-sm">${protectionLabel}</div>
-          ${this._meter(stats.raidValid ? 100 : 35, 100, raidMeta.color, raidMeta.label)}
-          <div class="stat-sub ${stats.raidValid ? 'text-gray-500' : 'text-red-400'}">${stats.raidValid ? `${stats.driveCount} drives protected` : raidMeta.label}</div>
         </div>
 
         <div class="strip-card">
@@ -1216,26 +1166,12 @@ export class UI {
           <div class="stat-label">${statTerms.power}</div>
           <div class="strip-value-sm">${stats.totalPowerW.toFixed(0)} W</div>
           ${this._meter(stats.totalPowerW, powerCeiling, '#a78bfa', `${stats.totalPowerW.toFixed(0)} W estimated`)}
-          <div class="stat-sub text-gray-500">$${stats.energyCostPerYear.toFixed(0)}/yr incl PUE</div>
-        </div>
-
-        <div class="strip-card">
-          <div class="stat-label">${statTerms.rebuild}</div>
-          <div class="strip-value-sm">${stats.rebuildTimeHours.toFixed(1)} h</div>
-          ${this._meter(stats.rebuildTimeHours, rebuildCeiling, rebuildTone, stats.rebuildWarning || (stats.rebuildDegraded ? 'Array vulnerable during rebuild' : 'Mirror rebuild estimate'))}
-          <div class="stat-sub ${stats.rebuildWarning ? 'text-red-400' : stats.rebuildDegraded ? 'text-yellow-500' : 'text-gray-500'}">${rebuildLabel} · ${stats.rebuildSecondFailureRiskPct.toFixed(2)}%</div>
-        </div>
-
-        <div class="strip-card">
-          <div class="stat-label">${statTerms.wear}</div>
-          <div class="strip-value-sm">${enduranceLabel}</div>
-          ${this._meter(enduranceYears, 5, enduranceTone, stats.workloadWriteTBPerDay ? `${stats.workloadWriteTBPerDay} TB/day logical use-case writes` : 'Select a use case for lifecycle estimate')}
-          <div class="stat-sub text-gray-500">${stats.workloadWriteTBPerDay ? `${stats.workloadWriteTBPerDay} TB/day` : 'use case needed'}</div>
+          <div class="stat-sub text-gray-500">$${stats.energyCostPerYear.toFixed(0)}/yr electricity</div>
         </div>
 
         <div class="strip-card">
           <div class="stat-label">${statTerms.latency}</div>
-          <div class="strip-value-sm">${stats.estimatedP99ReadMs ? stats.estimatedP99ReadMs.toFixed(1) : '0.0'} ms</div>
+          <div class="strip-value-sm">~${stats.estimatedP99ReadMs ? stats.estimatedP99ReadMs.toFixed(1) : '0.0'} ms</div>
           ${this._meter(stats.estimatedP99ReadMs || 0, p99Target, p99Tone, 'Heuristic p99 read latency class')}
           <div class="stat-sub text-gray-500">${statTerms.qd} · ${statTerms.iops}</div>
         </div>
