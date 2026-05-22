@@ -1,31 +1,21 @@
-// ui.js — DOM-based UI panels
-// Server selector, bay config, workload, RAID, drive palette, stats, insights, drive info
-import { EventBus, RAID_MODES, buildBays } from './state.js?v=46';
-
-// NVMe is backwards compatible — PCIe 4 drives work in PCIe 5 bays
-function interfaceCompatible(driveIf, bayIf) {
-  if (driveIf === bayIf) return true;
-  // NVMe PCIe 4 drive in NVMe PCIe 5 bay — OK (runs at Gen4 speed)
-  if (driveIf === 'NVMe PCIe 4' && bayIf === 'NVMe PCIe 5') return true;
-  if (driveIf === 'NVMe PCIe 3' && (bayIf === 'NVMe PCIe 4' || bayIf === 'NVMe PCIe 5')) return true;
-  return false;
-}
-
-function formFactorCompatible(drive, bay) {
-  if (drive.formFactor === bay.formFactor) return true;
-  return drive.formFactor === '2.5"' && bay.formFactor === '3.5"' && drive.interface === 'SATA III' && bay.interface === 'SATA III';
-}
-
-function driveCompatibleWithBay(drive, bay) {
-  return formFactorCompatible(drive, bay) && interfaceCompatible(drive.interface, bay.interface);
-}
+// ui.js — DOM projection for controls, panels, hover card, and palette.
+// Event callbacks enqueue facts/actions; app.js owns interpretation order.
+import {
+  RAID_MODES,
+  compatibleDrivesForBay,
+  driveCompatWithBays,
+  driveCompatibleWithBay,
+  pickFillDriveForBay,
+  supportedBayConfigs,
+  visibleServers,
+} from './state.js?v=46';
 
 export class UI {
-  constructor(state, computeStatsFn, generateInsightsFn, computeFitnessFn) {
+  constructor(state, services) {
     this.state = state;
-    this.computeStats = computeStatsFn;
-    this.generateInsights = generateInsightsFn;
-    this.computeFitness = computeFitnessFn;
+    this.generateInsights = services.generateInsights;
+    this.computeFitness = services.computeFitness;
+    this.dispatch = services.dispatch;
 
     this.els = {
       serverSelect: document.getElementById('server-select'),
@@ -49,6 +39,8 @@ export class UI {
       sidebarToggle: document.getElementById('sidebar-toggle'),
       fillAll: document.getElementById('fill-all-btn'),
       clearAll: document.getElementById('clear-all-btn'),
+      appGrid: document.querySelector('.app-grid'),
+      canvas: document.getElementById('rack-canvas'),
     };
     this.hoverDriveKey = null;
 
@@ -62,87 +54,20 @@ export class UI {
     this._initFillControls();
     this._initButtons();
     this._initDrivePalette();
-    this._initHoverDismissal();
-
-    EventBus.on('state:change', () => this.refresh());
-    EventBus.on('bay:update', () => this.refresh());
-    EventBus.on('server:change', () => this.refresh());
   }
 
   // === SERVER ===
   _initServerSelect() {
     const sel = this.els.serverSelect;
-    sel.innerHTML = '<option value="">— pick a server —</option>';
-
-    // Group by owned, branded purchase options, and generic what-if chassis.
-    const visibleServers = this._retailCompatibleServers();
-    const owned = visibleServers.filter(s => s.owned);
-    const available = visibleServers.filter(s => !s.owned && s.vendor !== 'Reference');
-    const reference = visibleServers.filter(s => !s.owned && s.vendor === 'Reference');
-    const serverLabel = (s) => {
-      const firstConfig = this._supportedBayConfigs(s)[0];
-      const bays = firstConfig ? firstConfig.name : `${s.bays[0].count}× ${s.bays[0].formFactor}`;
-      return `${s.name}  (${s.formUnit}, ${bays})`;
-    };
-
-    if (owned.length) {
-      const g = document.createElement('optgroup');
-      g.label = 'OWNED SERVERS';
-      owned.forEach(s => {
-        const o = document.createElement('option');
-        o.value = s.id;
-        o.textContent = serverLabel(s);
-        g.appendChild(o);
-      });
-      sel.appendChild(g);
-    }
-
-    if (available.length) {
-      const g = document.createElement('optgroup');
-      g.label = 'NEW OPTIONS';
-      available.forEach(s => {
-        const o = document.createElement('option');
-        o.value = s.id;
-        o.textContent = serverLabel(s);
-        g.appendChild(o);
-      });
-      sel.appendChild(g);
-    }
-
-    if (reference.length) {
-      const g = document.createElement('optgroup');
-      g.label = 'REFERENCE';
-      reference.forEach(s => {
-        const o = document.createElement('option');
-        o.value = s.id;
-        o.textContent = serverLabel(s);
-        g.appendChild(o);
-      });
-      sel.appendChild(g);
-    }
-
     sel.addEventListener('change', () => {
-      const server = this.state.serverCatalog.find(s => s.id === sel.value) || null;
-      this.state.server = server;
-      this.state.modules = [];
-      this.state.activeBayConfig = this._defaultBayConfig(server);
-      this._rebuildBays();
-      this._updateBayConfigSelect();
-      this._updateNetworkSelect();
-      this._updateFillControls();
-      this._updateDrivePaletteFilter();
-      EventBus.emit('server:change');
+      this.dispatch({ type: 'server-change', serverId: sel.value });
     });
   }
 
   // === BAY CONFIG (for R7725-type servers) ===
   _initBayConfigSelect() {
     this.els.bayConfigSelect.addEventListener('change', () => {
-      this.state.activeBayConfig = this.els.bayConfigSelect.value;
-      this._rebuildBays();
-      this._updateFillControls();
-      this._updateDrivePaletteFilter();
-      EventBus.emit('server:change');
+      this.dispatch({ type: 'bay-config-change', configId: this.els.bayConfigSelect.value });
     });
   }
 
@@ -159,9 +84,6 @@ export class UI {
 
     group.style.display = 'block';
     sel.innerHTML = '';
-    if (!configs.some(c => c.id === this.state.activeBayConfig)) {
-      this.state.activeBayConfig = configs[0].id;
-    }
     configs.forEach(c => {
       const o = document.createElement('option');
       o.value = c.id;
@@ -172,15 +94,11 @@ export class UI {
   }
 
   _retailCompatibleServers() {
-    return this.state.serverCatalog.filter(server => {
-      if (server.bayConfigs) return this._supportedBayConfigs(server).length > 0;
-      return this._baySpecsRetailCompatible(server.bays || []);
-    });
+    return visibleServers(this.state);
   }
 
   _supportedBayConfigs(server) {
-    if (!server?.bayConfigs) return [];
-    return server.bayConfigs.filter(config => this._baySpecsRetailCompatible(config.bays || []));
+    return supportedBayConfigs(server, this.state.retailConsumerDrives);
   }
 
   _defaultBayConfig(server) {
@@ -190,7 +108,7 @@ export class UI {
 
   _baySpecsRetailCompatible(baySpecs) {
     return baySpecs.length > 0 && baySpecs.every(spec =>
-      this._retailConsumerDrives().some(drive => driveCompatibleWithBay(drive, spec))
+      this.state.retailConsumerDrives.some(drive => driveCompatibleWithBay(drive, spec))
     );
   }
 
@@ -229,8 +147,7 @@ export class UI {
       sel.appendChild(o);
     });
     sel.addEventListener('change', () => {
-      this.state.raidMode = sel.value;
-      EventBus.emit('raid:change');
+      this.dispatch({ type: 'raid-change', raidMode: sel.value });
     });
   }
 
@@ -245,10 +162,7 @@ export class UI {
       sel.appendChild(o);
     });
     sel.addEventListener('change', () => {
-      this.state.workload = this.state.workloadCatalog.find(w => w.id === sel.value) || null;
-      this._updateNetworkSelect();
-      this._updateDrivePaletteFilter();
-      EventBus.emit('workload:change');
+      this.dispatch({ type: 'workload-change', workloadId: sel.value });
     });
   }
 
@@ -257,19 +171,11 @@ export class UI {
     const sel = this.els.networkSelect;
     if (!sel) return;
     sel.addEventListener('change', () => {
-      const value = sel.value;
-      this.state.networkGbpsOverride = value === 'auto'
-        ? null
-        : value === 'local'
-          ? 'local'
-          : Number(value);
-      this._updateNetworkInfo();
-      EventBus.emit('network:change');
+      this.dispatch({ type: 'network-change', value: sel.value });
     });
-    this._updateNetworkSelect();
   }
 
-  _updateNetworkSelect() {
+  _updateNetworkSelect(stats = null) {
     const sel = this.els.networkSelect;
     if (!sel) return;
     const defaultGbps = this.state.workload?.modelAssumptions?.networkGbps || this.state.server?.networkGbps || 25;
@@ -284,7 +190,7 @@ export class UI {
       <option value="local">Local only / no cap</option>
     `;
     sel.value = selected;
-    this._updateNetworkInfo();
+    this._updateNetworkInfo(stats);
   }
 
   _updateNetworkInfo(stats = null) {
@@ -327,8 +233,7 @@ export class UI {
     `;
     sel.value = this.state.coolingProfile || 'stock';
     sel.addEventListener('change', () => {
-      this.state.coolingProfile = sel.value;
-      EventBus.emit('cooling:change');
+      this.dispatch({ type: 'cooling-change', coolingProfile: sel.value });
     });
   }
 
@@ -347,15 +252,12 @@ export class UI {
     `;
     strategy.value = this.state.fillStrategy || 'use-case';
     strategy.addEventListener('change', () => {
-      this.state.fillStrategy = strategy.value;
-      this._updateFillControls();
+      this.dispatch({ type: 'fill-strategy-change', strategy: strategy.value });
     });
 
     this.els.fillDriveSelect?.addEventListener('change', () => {
-      this.state.fillDriveId = this.els.fillDriveSelect.value || null;
+      this.dispatch({ type: 'fill-drive-change', driveId: this.els.fillDriveSelect.value || null });
     });
-
-    this._updateFillControls();
   }
 
   _updateFillControls() {
@@ -373,13 +275,13 @@ export class UI {
       .sort((a, b) =>
         a.formFactor.localeCompare(b.formFactor) ||
         a.interface.localeCompare(b.interface) ||
-        (a.priceUSD / a.capacityTB) - (b.priceUSD / b.capacityTB)
+        a.pricePerTB - b.pricePerTB
       );
 
     driveSelect.innerHTML = drives.length
       ? drives.map(d => `
         <option value="${this._escapeHtml(d.id)}">
-          ${this._escapeHtml(`${this._driveDisplayName(d)} · ${this._driveCapacityLabel(d)} · ${d.interface === 'SATA III' ? 'SATA' : d.interface.replace('NVMe PCIe ', 'Gen')} · $${Math.round(d.priceUSD / d.capacityTB)}/TB`)}
+          ${this._escapeHtml(`${this._driveDisplayName(d)} · ${this._driveCapacityLabel(d)} · ${d.interfaceInfo.shortLabel} · $${Math.round(d.pricePerTB)}/TB`)}
         </option>
       `).join('')
       : '<option value="">No compatible drives</option>';
@@ -387,7 +289,6 @@ export class UI {
     const current = drives.some(d => d.id === this.state.fillDriveId)
       ? this.state.fillDriveId
       : drives[0]?.id || null;
-    this.state.fillDriveId = current;
     driveSelect.value = current || '';
     this._updateFillStrategyInfo();
   }
@@ -438,7 +339,7 @@ export class UI {
 
     const picks = [];
     for (const bay of emptyBays) {
-      const drive = this._pickFillDriveForBay(bay);
+      const drive = pickFillDriveForBay(this.state, bay);
       if (!drive) continue;
       const existing = picks.find(p => p.drive.id === drive.id);
       if (existing) {
@@ -451,7 +352,7 @@ export class UI {
     if (!picks.length) return 'No compatible retail SSDs are available for the remaining empty bays.';
 
     return `Next fill: ${picks.slice(0, 3).map(({ drive, count }) => {
-      const pricePerTB = Math.round(drive.priceUSD / drive.capacityTB);
+      const pricePerTB = Math.round(drive.pricePerTB);
       return `${count}× ${this._driveDisplayName(drive)} ${this._driveCapacityLabel(drive)} ($${pricePerTB}/TB)`;
     }).join(' · ')}${picks.length > 3 ? ' · ...' : ''}`;
   }
@@ -467,57 +368,57 @@ export class UI {
 
   // === DRIVE PALETTE ===
   _retailConsumerDrives() {
-    return this.state.drives.filter(d => d.category === 'consumer' && d.priceUSD > 0);
+    return this.state.retailConsumerDrives;
   }
 
   _initDrivePalette() {
-    this._renderDrivePalette(this._retailConsumerDrives());
+    const container = this.els.drivePalette;
+    if (!container) return;
+
+    const driveIdFromEvent = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return null;
+      const card = target.closest('.drive-card');
+      return card instanceof HTMLElement ? card.dataset.driveId || null : null;
+    };
+
+    container.addEventListener('mousemove', (event) => {
+      const driveId = driveIdFromEvent(event);
+      if (!driveId) return;
+      this.dispatch({ type: 'palette-hover', driveId, clientX: event.clientX, clientY: event.clientY });
+    });
+    container.addEventListener('mouseleave', () => {
+      this.dispatch({ type: 'palette-hover-end' });
+    });
+    container.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      const driveId = driveIdFromEvent(event);
+      if (!driveId) return;
+      this.dispatch({ type: 'palette-pointer-down', driveId, clientX: event.clientX, clientY: event.clientY });
+    });
+    container.addEventListener('dragstart', (event) => {
+      const driveId = driveIdFromEvent(event);
+      if (!driveId) return;
+      if (event.dataTransfer) {
+        event.dataTransfer.setData('application/x-drive-id', driveId);
+        event.dataTransfer.setData('text/plain', driveId);
+        event.dataTransfer.effectAllowed = 'copy';
+      }
+      this.dispatch({ type: 'palette-drag-start', driveId, clientX: event.clientX, clientY: event.clientY });
+    });
+    container.addEventListener('click', (event) => {
+      const driveId = driveIdFromEvent(event);
+      if (!driveId) return;
+      this.dispatch({ type: 'palette-click', driveId });
+    });
   }
 
   _initSidebarToggle() {
     const toggle = this.els.sidebarToggle;
-    const grid = document.querySelector('.app-grid');
-    if (!toggle || !grid) return;
-
-    const storageKey = 'ssd-rack-sim.leftPanel.open';
-    let isOpen = true;
-
-    try {
-      const stored = localStorage.getItem(storageKey);
-      if (stored !== null) isOpen = stored === 'true';
-    } catch (_) {
-      isOpen = true;
-    }
-
-    const apply = (nextOpen) => {
-      grid.classList.toggle('sidebar-collapsed', !nextOpen);
-      toggle.setAttribute('aria-expanded', String(nextOpen));
-      toggle.setAttribute('aria-label', nextOpen ? 'Hide left panel' : 'Show left panel');
-      if (this.els.leftPanel) {
-        this.els.leftPanel.toggleAttribute('inert', !nextOpen);
-        this.els.leftPanel.setAttribute('aria-hidden', String(!nextOpen));
-      }
-    };
-
-    apply(isOpen);
+    if (!toggle) return;
     toggle.addEventListener('click', () => {
-      const nextOpen = toggle.getAttribute('aria-expanded') !== 'true';
-      apply(nextOpen);
-      try {
-        localStorage.setItem(storageKey, String(nextOpen));
-      } catch (_) {
-        // The bookmark still works if storage is unavailable.
-      }
+      this.dispatch({ type: 'sidebar-toggle' });
     });
-  }
-
-  _initHoverDismissal() {
-    document.addEventListener('mousemove', (e) => {
-      const target = e.target;
-      if (target instanceof Element && (target.closest('.drive-card') || target.id === 'rack-canvas')) return;
-      this.hideDriveHover();
-    });
-    document.addEventListener('scroll', () => this.hideDriveHover(), true);
   }
 
   _updateDrivePaletteFilter() {
@@ -608,7 +509,7 @@ export class UI {
         <span class="text-gray-300">${this._escapeHtml(capacityLabel)}</span>
         <span>${drive.formFactor}</span>
         <span>·</span>
-        <span>${drive.interface === 'SATA III' ? 'SATA' : drive.interface.replace('NVMe PCIe ', 'Gen')}</span>
+        <span>${drive.interfaceInfo.shortLabel}</span>
         <span>·</span>
         <span>${drive.nandType}</span>
       </div>
@@ -620,66 +521,9 @@ export class UI {
 
     card.append(mini, info);
 
-    card.addEventListener('mouseenter', (e) => {
-      if (this.state.dragDrive) return;
-      this.showDriveHover(drive, null, e.clientX, e.clientY);
-    });
-    card.addEventListener('mousemove', (e) => {
-      if (this.state.dragDrive) return;
-      this.showDriveHover(drive, null, e.clientX, e.clientY);
-    });
-    card.addEventListener('mouseleave', () => this.hideDriveHover());
-
     if (!disabled) {
       card.draggable = true;
       card.classList.add('can-drag');
-      card.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0) return;
-        this.hideDriveHover();
-        this.state.dragDrive = drive;
-        this.state.dragStart = { x: e.clientX, y: e.clientY };
-        this.state.paletteDragging = false;
-      });
-      card.addEventListener('mousedown', (e) => {
-        if (e.button !== 0) return;
-        this.hideDriveHover();
-        this.state.dragDrive = drive;
-        this.state.dragStart = { x: e.clientX, y: e.clientY };
-        this.state.paletteDragging = false;
-      });
-      card.addEventListener('dragstart', (e) => {
-        this.hideDriveHover();
-        this.state.dragDrive = drive;
-        this.state.dragStart = { x: e.clientX, y: e.clientY };
-        this.state.paletteDragging = true;
-        e.dataTransfer.setData('application/x-drive-id', drive.id);
-        e.dataTransfer.setData('text/plain', drive.id);
-        e.dataTransfer.effectAllowed = 'copy';
-      });
-      card.addEventListener('dragend', () => {
-        requestAnimationFrame(() => {
-          this.state.dragDrive = null;
-          this.state.dragStart = null;
-          this.state.paletteDragging = false;
-        });
-      });
-      card.addEventListener('click', () => {
-        let bay = this.state.selectedBay;
-        if (bay < 0 || !this.state.bays[bay]) {
-          bay = this.state.bays.findIndex(b => !b.drive && driveCompatibleWithBay(drive, b));
-        }
-        if (bay >= 0 && this.state.bays[bay]) {
-          const b = this.state.bays[bay];
-          if (driveCompatibleWithBay(drive, b)) {
-            b.drive = drive;
-            const next = this.state.bays.findIndex((b2, i) =>
-              i > bay && !b2.drive && driveCompatibleWithBay(drive, b2)
-            );
-            this.state.selectedBay = next >= 0 ? next : -1;
-            EventBus.emit('bay:update');
-          }
-        }
-      });
     }
 
     return card;
@@ -687,53 +531,41 @@ export class UI {
 
   _initButtons() {
     this.els.fillAll?.addEventListener('click', () => {
-      if (!this.state.server) return;
-      let filled = 0;
-      for (const bay of this.state.bays) {
-        if (bay.drive) continue;
-        const drive = this._pickFillDriveForBay(bay);
-        if (drive) {
-          bay.drive = drive;
-          filled += 1;
-        }
-      }
-      if (filled > 0) EventBus.emit('bay:update');
+      this.dispatch({ type: 'fill-all' });
     });
 
     this.els.clearAll?.addEventListener('click', () => {
-      this.state.bays.forEach(b => { b.drive = null; });
-      this.state.selectedBay = -1;
-      EventBus.emit('bay:update');
+      this.dispatch({ type: 'clear-all' });
     });
   }
 
   _compatibleDrivesForBay(bay) {
-    return this._retailConsumerDrives().filter(d => driveCompatibleWithBay(d, bay));
+    return compatibleDrivesForBay(this.state, bay);
   }
 
   _estimateFillSustainedMBs(drive) {
     if (drive.sustainedWriteMBs) return drive.sustainedWriteMBs;
-    if (drive.interface === 'SATA III') {
+    if (drive.interfaceInfo.kind === 'sata') {
       const factor = drive.nandType === 'QLC' ? 0.35 : (!drive.dramCacheMB ? 0.65 : 0.85);
       return Math.max(120, Math.min(drive.seqWriteMBs, drive.seqWriteMBs * factor));
     }
-    const gen = Number(String(drive.interface).match(/PCIe\s+(\d+)/)?.[1] || 4);
+    const gen = drive.interfaceInfo.generation || 4;
     const factor = drive.nandType === 'QLC' ? 0.08 : (!drive.dramCacheMB ? 0.18 : gen >= 5 ? 0.28 : 0.26);
     return Math.max(500, Math.min(drive.seqWriteMBs, drive.seqWriteMBs * factor));
   }
 
   _fillSortValue(drive, strategy, candidates) {
-    const costPerTB = drive.priceUSD / drive.capacityTB;
+    const costPerTB = drive.pricePerTB;
     const sustained = this._estimateFillSustainedMBs(drive);
     const max = (getValue) => Math.max(1, ...candidates.map(getValue));
     const min = (getValue) => Math.min(...candidates.map(getValue).filter(v => Number.isFinite(v) && v > 0));
     const norm = (value, maxValue) => maxValue > 0 ? value / maxValue : 0;
 
     if (strategy === 'specific') return drive.id === this.state.fillDriveId ? 1 : -Infinity;
-    if (strategy === 'value') return min(d => d.priceUSD / d.capacityTB) / costPerTB;
+    if (strategy === 'value') return min(d => d.pricePerTB) / costPerTB;
     if (strategy === 'capacity') return drive.capacityTB + (1 / costPerTB);
     if (strategy === 'sustained-write') return sustained + (drive.dwpd || 0) * 100;
-    if (strategy === 'random-read') return (drive.random4KReadIOPS || 0) + (drive.interface === 'SATA III' ? 0 : 50000);
+    if (strategy === 'random-read') return (drive.random4KReadIOPS || 0) + (drive.interfaceInfo.kind === 'sata' ? 0 : 50000);
     if (strategy === 'endurance') return (drive.dwpd || 0) * 1000000 + (drive.tbw || 0);
 
     const priorities = this.state.workload?.priorities || {};
@@ -753,10 +585,10 @@ export class UI {
     };
     const qlcSensitive = weights.sustained + weights.endurance + weights.latency >= 5;
     const qlcFactor = drive.nandType === 'QLC' ? (qlcSensitive ? 0.72 : 0.9) : 1;
-    const nvmeFactor = drive.interface === 'SATA III' ? 0.82 : 1;
+    const nvmeFactor = drive.interfaceInfo.kind === 'sata' ? 0.82 : 1;
 
     const score =
-      weights.value * (min(d => d.priceUSD / d.capacityTB) / costPerTB) +
+      weights.value * (min(d => d.pricePerTB) / costPerTB) +
       weights.capacity * norm(drive.capacityTB, max(d => d.capacityTB)) +
       weights.sustained * norm(sustained, max(d => this._estimateFillSustainedMBs(d))) +
       weights.random * norm(drive.random4KReadIOPS || 0, max(d => d.random4KReadIOPS || 0)) +
@@ -776,19 +608,18 @@ export class UI {
     const ranked = [...candidates].sort((a, b) => {
       const diff = this._fillSortValue(b, strategy, candidates) - this._fillSortValue(a, strategy, candidates);
       if (diff !== 0) return diff;
-      return (a.priceUSD / a.capacityTB) - (b.priceUSD / b.capacityTB);
+      return a.pricePerTB - b.pricePerTB;
     });
     return ranked[0] || null;
   }
 
   _driveCompatWithBays(drive) {
-    return this.state.bays.some(b => driveCompatibleWithBay(drive, b));
+    return driveCompatWithBays(drive, this.state.bays);
   }
 
   _rebuildBays() {
-    this.state.bays = buildBays(this.state.server, this.state.activeBayConfig, this.state.modules);
-    this.state.selectedBay = -1;
-    this.state.hoveredBay = -1;
+    // app.js owns bay rebuilding so control changes are ordered with the rest
+    // of the frame. This method stays only for older callsites during refactors.
   }
 
   _escapeHtml(value) {
@@ -797,28 +628,11 @@ export class UI {
   }
 
   _driveCapacityLabel(drive) {
-    const tb = Number(drive?.capacityTB) || 0;
-    if (tb > 0 && tb < 1) return `${Math.round(tb * 1000)}GB`;
-    return `${Number.isInteger(tb) ? tb.toFixed(0) : tb.toString()}TB`;
+    return drive?.capacityLabel || '0TB';
   }
 
   _driveDisplayName(drive) {
-    const name = String(drive?.name || '');
-    const tb = Number(drive?.capacityTB) || 0;
-    const tokens = new Set([
-      this._driveCapacityLabel(drive),
-      `${tb}TB`,
-      `${Number.isInteger(tb) ? tb.toFixed(0) : tb.toString()} TB`,
-      `${Math.round(tb * 1000)}GB`,
-      `${Math.round(tb * 1000)} GB`,
-    ]);
-    let display = name;
-    for (const token of tokens) {
-      if (!token || token === '0TB') continue;
-      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
-      display = display.replace(new RegExp(`\\s+${escaped}$`, 'i'), '');
-    }
-    return display.trim() || name;
+    return drive?.displayName || drive?.name || '';
   }
 
   _term(label, title, body, rows = [], variant = '') {
@@ -973,22 +787,90 @@ export class UI {
       .replace(/^Existing server\s+—\s+/i, '');
   }
 
-  // === REFRESH ALL PANELS ===
-  refresh() {
-    const stats = this.updateStats();
-    this._updateNetworkInfo(stats);
-    this._updateFillStrategyInfo();
-    this.updateFitness();
-    this.updateDriveInfo();
-    this.updateInsights();
+  renderShell() {
+    const grid = this.els.appGrid;
+    const toggle = this.els.sidebarToggle;
+    const open = this.state.leftPanelOpen;
+    if (grid) grid.className = open ? 'app-grid' : 'app-grid sidebar-collapsed';
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Hide left panel' : 'Show left panel');
+    }
+    if (this.els.leftPanel) {
+      this.els.leftPanel.toggleAttribute('inert', !open);
+      this.els.leftPanel.setAttribute('aria-hidden', String(!open));
+    }
   }
 
-  updateStats() {
-    const stats = this.computeStats(this.state);
+  renderCanvasChrome() {
+    if (this.els.canvas) this.els.canvas.style.cursor = this.state.canvasCursor;
+  }
+
+  renderHover() {
+    const hover = this.state.hoverCard;
+    if (hover.visible && hover.drive) {
+      this.showDriveHover(hover.drive, hover.bay, hover.clientX, hover.clientY);
+    } else {
+      this.hideDriveHover();
+    }
+  }
+
+  renderControls(stats = null) {
+    this._updateServerSelect();
+    this._updateBayConfigSelect();
+    this._updateNetworkSelect(stats);
+    this._updateFillControls();
+    this._updateDrivePaletteFilter();
+  }
+
+  _updateServerSelect() {
+    const sel = this.els.serverSelect;
+    sel.innerHTML = '<option value="">— pick a server —</option>';
+
+    const servers = this._retailCompatibleServers();
+    const groups = [
+      ['OWNED SERVERS', servers.filter(s => s.owned)],
+      ['NEW OPTIONS', servers.filter(s => !s.owned && s.vendor !== 'Reference')],
+      ['REFERENCE', servers.filter(s => !s.owned && s.vendor === 'Reference')],
+    ];
+    const serverLabel = (server) => {
+      const firstConfig = this._supportedBayConfigs(server)[0];
+      const bays = firstConfig ? firstConfig.name : `${server.bays[0].count}× ${server.bays[0].formFactor}`;
+      return `${server.name}  (${server.formUnit}, ${bays})`;
+    };
+
+    for (const [label, list] of groups) {
+      if (list.length === 0) continue;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      for (let i = 0; i < list.length; i++) {
+        const server = list[i];
+        const option = document.createElement('option');
+        option.value = server.id;
+        option.textContent = serverLabel(server);
+        group.appendChild(option);
+      }
+      sel.appendChild(group);
+    }
+
+    sel.value = this.state.server?.id || '';
+  }
+
+  // === REFRESH ALL PANELS ===
+  refresh(stats) {
+    this.updateStats(stats);
+    this._updateNetworkInfo(stats);
+    this._updateFillStrategyInfo();
+    this.updateFitness(stats);
+    this.updateDriveInfo();
+    this.updateInsights(stats);
+  }
+
+  updateStats(stats) {
     const panel = this.els.statsPanel;
     if (!panel || !this.state.server) {
       if (panel) panel.innerHTML = '<div class="text-gray-600 text-xs font-mono p-4 text-center">Select a server to begin</div>';
-      return stats;
+      return;
     }
 
     const workload = this.state.workload;
@@ -1185,10 +1067,9 @@ export class UI {
       </div>
     `;
 
-    return stats;
   }
 
-  updateFitness() {
+  updateFitness(stats) {
     const panel = this.els.fitnessPanel;
     if (!panel) return;
 
@@ -1198,7 +1079,6 @@ export class UI {
       return;
     }
 
-    const stats = this.computeStats(this.state);
     const filled = this.state.bays.filter(b => b.drive);
     if (filled.length === 0) {
       panel.innerHTML = `<div class="text-xs font-mono text-gray-600 p-2">Add drives to see ${this._escapeHtml(workload.name)} fitness</div>`;
@@ -1298,11 +1178,10 @@ export class UI {
     `;
   }
 
-  updateInsights() {
+  updateInsights(stats) {
     const panel = this.els.insightsPanel;
     if (!panel) return;
 
-    const stats = this.computeStats(this.state);
     const insights = this.generateInsights(this.state, stats, this.state.workload);
 
     if (insights.length === 0) {
@@ -1402,7 +1281,7 @@ export class UI {
   _driveDetailHtml(drive, bay = null) {
     const read = drive.seqReadMBs >= 1000 ? `${(drive.seqReadMBs / 1000).toFixed(1)} GB/s` : `${drive.seqReadMBs} MB/s`;
     const write = drive.seqWriteMBs >= 1000 ? `${(drive.seqWriteMBs / 1000).toFixed(1)} GB/s` : `${drive.seqWriteMBs} MB/s`;
-    const iface = drive.interface === 'SATA III' ? 'SATA' : drive.interface.replace('NVMe PCIe ', 'Gen');
+    const iface = drive.interfaceInfo.shortLabel;
     const displayName = this._driveDisplayName(drive);
     const capacityLabel = this._driveCapacityLabel(drive);
     const price = drive.priceUSD

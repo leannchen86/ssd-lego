@@ -101,7 +101,7 @@ export function generateInsights(state, stats, workload) {
             triggered = drives.some(d => d.category === 'industrial');
             break;
           case 'allSATA':
-            triggered = drives.every(d => d.interface === 'SATA III');
+            triggered = drives.every(d => d.interfaceInfo.kind === 'sata');
             break;
           case 'overCapacity':
             triggered = workload.requirements.maxUsableTB && stats.usableTB > workload.requirements.maxUsableTB * 2;
@@ -203,9 +203,9 @@ export function generateInsights(state, stats, workload) {
   // === SATA vs NVMe PRICE PARITY ===
   // Compute from catalog (priced drives only), not hardcoded
   const pricedDrives = state.drives.filter(d => d.priceUSD > 0);
-  const sataConsumer = pricedDrives.filter(d => d.interface === 'SATA III' && d.category === 'consumer');
-  const nvmeConsumer = pricedDrives.filter(d => d.interface.startsWith('NVMe') && d.category === 'consumer' && d.formFactor.startsWith('M.2'));
-  const satadrives = drives.filter(d => d.interface === 'SATA III');
+  const sataConsumer = pricedDrives.filter(d => d.interfaceInfo.kind === 'sata' && d.category === 'consumer');
+  const nvmeConsumer = pricedDrives.filter(d => d.interfaceInfo.kind === 'nvme' && d.category === 'consumer' && d.formFactor.startsWith('M.2'));
+  const satadrives = drives.filter(d => d.interfaceInfo.kind === 'sata');
   const pricedSataInConfig = satadrives.filter(d => d.priceUSD > 0);
 
   if (pricedSataInConfig.length > 0 && sataConsumer.length > 0 && nvmeConsumer.length > 0) {

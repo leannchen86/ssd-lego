@@ -32,9 +32,12 @@ The simulator is meant for planning and comparison, not final procurement or ben
 Most changes are data or vanilla JavaScript edits:
 
 - App shell: `index.html`
+- Catalog loading and normalization: `js/catalog.js`
+- Shared JSDoc data contracts: `js/types.js`
 - State and calculations: `js/state.js`
+- Render scheduling and input ordering: `js/app.js`
 - Canvas rack rendering: `js/renderer.js`
-- DOM controls and panels: `js/ui.js`
+- DOM projection for controls and panels: `js/ui.js`
 - Tradeoff analysis: `js/insights.js`
 - Catalog data: `data/*.json`
 

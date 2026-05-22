@@ -1,19 +1,14 @@
-// state.js — Reactive state with event bus
-// Extended for servers, workloads, expansion modules, bay configs
+// state.js — serializable app state plus pure-ish domain derivations.
+// No subscriptions live here; app.js owns input ordering and render scheduling.
 
-export const EventBus = {
-  _listeners: {},
-  on(event, fn) {
-    (this._listeners[event] ||= []).push(fn);
-  },
-  off(event, fn) {
-    if (!this._listeners[event]) return;
-    this._listeners[event] = this._listeners[event].filter(f => f !== fn);
-  },
-  emit(event, data) {
-    (this._listeners[event] || []).forEach(fn => fn(data));
-  }
-};
+/**
+ * @typedef {import('./types.js').Catalog} Catalog
+ * @typedef {import('./types.js').Drive} Drive
+ * @typedef {import('./types.js').Bay} Bay
+ * @typedef {import('./types.js').BaySpec} BaySpec
+ * @typedef {import('./types.js').Server} Server
+ * @typedef {import('./types.js').Module} Module
+ */
 
 export const RAID_MODES = {
   RAID0:  { name: 'RAID 0 (Stripe)',         usableRatio: 1.0,  minDrives: 2, redundancy: 0, raidWritePenalty: 1.0, raidReadBoost: true, description: 'Max speed, no safety net' },
@@ -39,6 +34,24 @@ function clamp(value, min, max) {
 
 function coolingProfileMultiplier(profile) {
   return COOLING_PROFILE_MULTIPLIERS[profile] || COOLING_PROFILE_MULTIPLIERS[DEFAULT_COOLING_PROFILE];
+}
+
+export function interfaceCompatible(driveInterface, bayInterface) {
+  if (driveInterface.kind !== bayInterface.kind) return false;
+  if (driveInterface.kind === 'sata') return true;
+  return driveInterface.generation <= bayInterface.generation;
+}
+
+export function formFactorCompatible(drive, bay) {
+  if (drive.formFactor === bay.formFactor) return true;
+  return drive.formFactor === '2.5"' &&
+    bay.formFactor === '3.5"' &&
+    drive.interfaceInfo.kind === 'sata' &&
+    bay.interfaceInfo.kind === 'sata';
+}
+
+export function driveCompatibleWithBay(drive, bay) {
+  return formFactorCompatible(drive, bay) && interfaceCompatible(drive.interfaceInfo, bay.interfaceInfo);
 }
 
 function bayThermalBudgetW(server, bay) {
@@ -108,9 +121,7 @@ function deriveThermalModel(state, drivePowerW, modulePowerW) {
 }
 
 function interfaceGen(drive) {
-  if (drive.interface === 'SATA III') return 0;
-  const match = String(drive.interface).match(/PCIe\s+(\d+)/);
-  return match ? Number(match[1]) : 0;
+  return drive.interfaceInfo.generation;
 }
 
 function isDramless(drive) {
@@ -125,14 +136,14 @@ function estimateSustainedWriteMBs(drive) {
   const dramless = isDramless(drive);
   let factor;
 
-  if (drive.interface === 'SATA III') {
+  if (drive.interfaceInfo.kind === 'sata') {
     factor = qlc ? 0.35 : dramless ? 0.65 : 0.85;
   } else {
     factor = qlc ? 0.08 : dramless ? 0.18 : gen >= 5 ? 0.28 : 0.26;
   }
 
   const estimate = drive.seqWriteMBs * factor;
-  if (drive.interface === 'SATA III') {
+  if (drive.interfaceInfo.kind === 'sata') {
     return Math.max(120, Math.min(drive.seqWriteMBs, estimate));
   }
   return Math.max(500, Math.min(drive.seqWriteMBs, estimate));
@@ -147,7 +158,7 @@ function estimateSlcCacheGB(drive) {
   let perTB;
   let cap;
 
-  if (drive.interface === 'SATA III') {
+  if (drive.interfaceInfo.kind === 'sata') {
     perTB = qlc ? 20 : 35;
     cap = qlc ? 160 : 220;
   } else if (qlc) {
@@ -165,7 +176,7 @@ function estimateLowQueueReadIOPS(drive) {
   if (drive.lowQueueReadIOPS) return drive.lowQueueReadIOPS;
   const qlc = drive.nandType === 'QLC';
   const dramless = isDramless(drive);
-  const factor = drive.interface === 'SATA III'
+  const factor = drive.interfaceInfo.kind === 'sata'
     ? (qlc ? 0.34 : dramless ? 0.38 : 0.48)
     : (qlc ? 0.13 : dramless ? 0.18 : 0.22);
   return Math.round(drive.random4KReadIOPS * factor);
@@ -173,7 +184,7 @@ function estimateLowQueueReadIOPS(drive) {
 
 function estimateReadP99Ms(drive) {
   if (drive.p99ReadMs) return drive.p99ReadMs;
-  if (drive.interface === 'SATA III') {
+  if (drive.interfaceInfo.kind === 'sata') {
     return (drive.nandType === 'QLC' ? 9.0 : 6.0) + (isDramless(drive) ? 1.5 : 0);
   }
   const gen = interfaceGen(drive);
@@ -194,13 +205,15 @@ function degradedRiskMembers(mode, driveCount) {
   return 0;
 }
 
-export function createState() {
-  const state = {
+export function createState(catalog) {
+  return {
     // Catalogs
-    drives: [],
-    serverCatalog: [],
-    moduleCatalog: [],
-    workloadCatalog: [],
+    catalog,
+    drives: catalog.drives,
+    serverCatalog: catalog.servers,
+    moduleCatalog: catalog.modules,
+    workloadCatalog: catalog.workloads,
+    retailConsumerDrives: catalog.retailConsumerDrives,
 
     // Selected config
     server: null,
@@ -220,19 +233,16 @@ export function createState() {
     dragDrive: null,
     dragStart: null,
     paletteDragging: false,
+    hoverCard: { visible: false, drive: null, bay: null, clientX: 0, clientY: 0 },
+    canvasCursor: 'default',
+    leftPanelOpen: true,
+    needsShellRender: true,
+    needsFullUiRender: true,
+    needsControlRender: true,
+    needsCanvasRender: true,
+    needsCanvasChromeRender: true,
+    needsHoverRender: true,
   };
-
-  return new Proxy(state, {
-    set(target, prop, value) {
-      const old = target[prop];
-      target[prop] = value;
-      if (old !== value) {
-        EventBus.emit('state:change', { prop, value, old });
-        EventBus.emit(`state:${prop}`, { value, old });
-      }
-      return true;
-    }
-  });
 }
 
 // Build bays array from server + active bay config + installed modules
@@ -259,6 +269,7 @@ export function buildBays(server, activeBayConfig, modules) {
         source: 'chassis',
         formFactor: spec.formFactor,
         interface: spec.interface,
+        interfaceInfo: spec.interfaceInfo,
         hotSwap: spec.hotSwap,
         lanesPerDrive: spec.lanesPerDrive || 0,
         perDriveMaxMBs: spec.perDriveMaxMBs || 0,
@@ -278,13 +289,221 @@ export function buildBays(server, activeBayConfig, modules) {
           moduleName: mod.name,
           formFactor: mod.provides.formFactor,
           interface: mod.provides.interface,
+          interfaceInfo: mod.provides.interfaceInfo,
           hotSwap: mod.provides.hotSwap,
+          lanesPerDrive: mod.provides.lanesPerDrive || 0,
+          perDriveMaxMBs: mod.provides.perDriveMaxMBs || 0,
         });
       }
     }
   }
 
   return bays;
+}
+
+export function driveCompatWithBays(drive, bays) {
+  for (let i = 0; i < bays.length; i++) {
+    if (driveCompatibleWithBay(drive, bays[i])) return true;
+  }
+  return false;
+}
+
+export function baySpecsRetailCompatible(baySpecs, retailDrives) {
+  if (baySpecs.length === 0) return false;
+  for (let i = 0; i < baySpecs.length; i++) {
+    let hasMatch = false;
+    for (let j = 0; j < retailDrives.length; j++) {
+      if (driveCompatibleWithBay(retailDrives[j], baySpecs[i])) {
+        hasMatch = true;
+        break;
+      }
+    }
+    if (!hasMatch) return false;
+  }
+  return true;
+}
+
+export function supportedBayConfigs(server, retailDrives) {
+  if (!server?.bayConfigs) return [];
+  return server.bayConfigs.filter(config => baySpecsRetailCompatible(config.bays, retailDrives));
+}
+
+export function defaultBayConfig(server, retailDrives) {
+  if (!server?.bayConfigs) return null;
+  return supportedBayConfigs(server, retailDrives)[0]?.id || null;
+}
+
+export function visibleServers(state) {
+  return state.serverCatalog.filter(server => {
+    if (server.bayConfigs) return supportedBayConfigs(server, state.retailConsumerDrives).length > 0;
+    return baySpecsRetailCompatible(server.bays, state.retailConsumerDrives);
+  });
+}
+
+export function rebuildBays(state) {
+  state.bays = buildBays(state.server, state.activeBayConfig, state.modules);
+  state.selectedBay = -1;
+  state.hoveredBay = -1;
+  state.needsCanvasRender = true;
+  state.needsFullUiRender = true;
+}
+
+export function buildSignature(state) {
+  const bayDrives = state.bays.map(b => b.drive?.id || '').join(',');
+  const modules = state.modules.map(m => m.id).join(',');
+  return [
+    state.server?.id || '',
+    state.activeBayConfig || '',
+    state.raidMode || '',
+    state.networkGbpsOverride ?? '',
+    state.coolingProfile || '',
+    state.fillStrategy || '',
+    state.fillDriveId || '',
+    state.workload?.id || '',
+    modules,
+    bayDrives,
+  ].join('|');
+}
+
+export function findCompatibleBay(state, drive, startIndex = 0) {
+  if (!drive) return -1;
+  const from = Math.max(0, startIndex);
+  let bay = state.bays.findIndex((b, i) =>
+    i >= from && !b.drive && driveCompatibleWithBay(drive, b)
+  );
+  if (bay >= 0) return bay;
+  bay = state.bays.findIndex(b => !b.drive && driveCompatibleWithBay(drive, b));
+  return bay;
+}
+
+export function placeDriveInBay(state, drive, bayIndex) {
+  if (!drive || bayIndex < 0 || !state.bays[bayIndex]) return false;
+  const bay = state.bays[bayIndex];
+  if (!driveCompatibleWithBay(drive, bay)) return false;
+
+  bay.drive = drive;
+  state.selectedBay = bayIndex;
+  state.hoveredBay = bayIndex;
+  state.dragDrive = null;
+  state.needsCanvasRender = true;
+  state.needsFullUiRender = true;
+  return true;
+}
+
+export function compatibleDrivesForBay(state, bay) {
+  return state.retailConsumerDrives.filter(drive => driveCompatibleWithBay(drive, bay));
+}
+
+function estimateFillSustainedMBs(drive) {
+  if (drive.sustainedWriteMBs) return drive.sustainedWriteMBs;
+  if (drive.interfaceInfo.kind === 'sata') {
+    const factor = drive.nandType === 'QLC' ? 0.35 : (!drive.dramCacheMB ? 0.65 : 0.85);
+    return Math.max(120, Math.min(drive.seqWriteMBs, drive.seqWriteMBs * factor));
+  }
+  const gen = drive.interfaceInfo.generation || 4;
+  const factor = drive.nandType === 'QLC' ? 0.08 : (!drive.dramCacheMB ? 0.18 : gen >= 5 ? 0.28 : 0.26);
+  return Math.max(500, Math.min(drive.seqWriteMBs, drive.seqWriteMBs * factor));
+}
+
+function fillSortValue(state, drive, strategy, candidates) {
+  const costPerTB = drive.pricePerTB;
+  const sustained = estimateFillSustainedMBs(drive);
+  const max = (getValue) => Math.max(1, ...candidates.map(getValue));
+  const min = (getValue) => Math.min(...candidates.map(getValue).filter(v => Number.isFinite(v) && v > 0));
+  const norm = (value, maxValue) => maxValue > 0 ? value / maxValue : 0;
+
+  switch (strategy) {
+    case 'specific':
+      return drive.id === state.fillDriveId ? 1 : -Infinity;
+    case 'value':
+      return min(d => d.pricePerTB) / costPerTB;
+    case 'capacity':
+      return drive.capacityTB + (1 / costPerTB);
+    case 'sustained-write':
+      return sustained + (drive.dwpd || 0) * 100;
+    case 'random-read':
+      return (drive.random4KReadIOPS || 0) + (drive.interfaceInfo.kind === 'sata' ? 0 : 50000);
+    case 'endurance':
+      return (drive.dwpd || 0) * 1000000 + (drive.tbw || 0);
+    case 'use-case':
+    default:
+      break;
+  }
+
+  const priorities = state.workload?.priorities || {};
+  const weight = (key, fallback) => ({
+    critical: 4,
+    high: 3,
+    moderate: 2,
+    low: 1,
+  }[priorities[key]] || fallback);
+  const weights = {
+    value: weight('costPerTB', 2.5),
+    capacity: weight('capacity', 1.5),
+    sustained: weight('seqWrite', 1),
+    random: weight('randomRead', 1),
+    endurance: weight('endurance', 1),
+    latency: weight('latency', 1),
+  };
+  const qlcSensitive = weights.sustained + weights.endurance + weights.latency >= 5;
+  const qlcFactor = drive.nandType === 'QLC' ? (qlcSensitive ? 0.72 : 0.9) : 1;
+  const nvmeFactor = drive.interfaceInfo.kind === 'sata' ? 0.82 : 1;
+
+  const score =
+    weights.value * (min(d => d.pricePerTB) / costPerTB) +
+    weights.capacity * norm(drive.capacityTB, max(d => d.capacityTB)) +
+    weights.sustained * norm(sustained, max(d => estimateFillSustainedMBs(d))) +
+    weights.random * norm(drive.random4KReadIOPS || 0, max(d => d.random4KReadIOPS || 0)) +
+    weights.endurance * norm(drive.dwpd || 0, max(d => d.dwpd || 0)) +
+    weights.latency * norm(drive.random4KReadIOPS || 0, max(d => d.random4KReadIOPS || 0)) * nvmeFactor;
+
+  return score * qlcFactor;
+}
+
+export function pickFillDriveForBay(state, bay) {
+  const candidates = compatibleDrivesForBay(state, bay);
+  if (candidates.length === 0) return null;
+  const strategy = state.fillStrategy || 'use-case';
+  if (strategy === 'specific') {
+    return candidates.find(d => d.id === state.fillDriveId) || null;
+  }
+  const ranked = [...candidates].sort((a, b) => {
+    const diff = fillSortValue(state, b, strategy, candidates) - fillSortValue(state, a, strategy, candidates);
+    if (diff !== 0) return diff;
+    return a.pricePerTB - b.pricePerTB;
+  });
+  return ranked[0] || null;
+}
+
+export function fillEmptyBays(state) {
+  let filled = 0;
+  for (let i = 0; i < state.bays.length; i++) {
+    const bay = state.bays[i];
+    if (bay.drive) continue;
+    const drive = pickFillDriveForBay(state, bay);
+    if (drive) {
+      bay.drive = drive;
+      filled += 1;
+    }
+  }
+  if (filled > 0) {
+    state.needsCanvasRender = true;
+    state.needsFullUiRender = true;
+  }
+  return filled;
+}
+
+export function clearBays(state) {
+  let changed = false;
+  for (let i = 0; i < state.bays.length; i++) {
+    if (state.bays[i].drive) changed = true;
+    state.bays[i].drive = null;
+  }
+  state.selectedBay = -1;
+  if (changed) {
+    state.needsCanvasRender = true;
+    state.needsFullUiRender = true;
+  }
 }
 
 export function computeStats(state) {

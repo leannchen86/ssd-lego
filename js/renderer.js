@@ -928,7 +928,7 @@ export class RackRenderer {
 
       ctx.fillStyle = 'rgba(203, 213, 225, 0.70)';
       ctx.font = `${Math.max(5, Math.min(8, minDim * 0.125))}px "JetBrains Mono", monospace`;
-      const ifShort = d.interface === 'SATA III' ? 'SATA' : d.interface.replace('NVMe PCIe ', 'GEN');
+      const ifShort = d.interfaceInfo.canvasLabel;
       this._clippedText(ctx, ifShort, labelX + labelW / 2, labelY + labelH * 0.73, labelW - 6);
 
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
@@ -961,7 +961,7 @@ export class RackRenderer {
       this._roundRect(ctx, faceX + 5, faceY + faceH - Math.max(12, faceH * 0.14), faceW - 10, Math.max(6, faceH * 0.06), 2);
       ctx.fill();
 
-      const ifColor = bay.interface === 'SATA III' ? '#2196f3'
+      const ifColor = bay.interfaceInfo.kind === 'sata' ? '#2196f3'
         : bay.interface.includes('NVMe') ? '#9c27b0'
         : '#607d8b';
       ctx.fillStyle = ifColor;
@@ -1039,7 +1039,7 @@ export class RackRenderer {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
       ctx.font = `${Math.max(6, Math.min(10, sh * 0.30))}px "JetBrains Mono", monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText(d.interface.replace('NVMe PCIe ', 'G'), faceX + faceW * 0.56, faceY + faceH / 2);
+      ctx.fillText(d.interfaceInfo.canvasLabel.replace('GEN', 'G'), faceX + faceW * 0.56, faceY + faceH / 2);
 
       this._drawActivityLed(ctx, bx + pad * 1.2, by + sh / 2, driveColor);
     } else {
@@ -1138,7 +1138,7 @@ export class RackRenderer {
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
     ctx.font = `${Math.max(6, Math.min(8, minDim * 0.16))}px "JetBrains Mono", monospace`;
-    ctx.fillText(d.interface.replace('NVMe PCIe ', 'GEN'), stickX + stickW / 2, stickY + stickH * 0.75);
+    ctx.fillText(d.interfaceInfo.canvasLabel, stickX + stickW / 2, stickY + stickH * 0.75);
   }
 
   _drawChip(ctx, x, y, w, h) {
