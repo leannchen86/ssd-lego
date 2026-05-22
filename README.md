@@ -19,10 +19,9 @@ There is no build step for the app. It uses plain ES modules, Canvas 2D, and Tai
 
 ## What It Models
 
-- Owned Dell fleet reuse vs new Dell/Supermicro purchase options
-- SATA and NVMe bay compatibility, including PCIe generation fallback
+- Owned Dell fleet reuse vs new Dell/Supermicro/reference purchase options
+- SATA and native M.2 NVMe bay compatibility, including PCIe generation fallback
 - RAID0, RAID1, RAID5, RAID10, and JBOD capacity/performance tradeoffs
-- Optional M.2 NVMe PCIe expansion cards when a server has a free x16 slot
 - Workload fit for archive, search/web serving, low-latency app data, and AI scratch use cases
 - Network path caps for 25GbE, 100GbE, 200GbE, or local disk-bound modeling
 - Cost, power/cooling, rebuild exposure, controller/NAND/vendor concentration, and bottlenecks
@@ -41,7 +40,7 @@ Most changes are data or vanilla JavaScript edits:
 - Tradeoff analysis: `js/insights.js`
 - Catalog data: `data/*.json`
 
-If you add or update SSDs, servers, workloads, or expansion modules, edit the matching JSON file and reload the page.
+If you add or update SSDs, servers, or workloads, edit the matching JSON file and reload the page.
 
 ## License
 

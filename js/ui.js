@@ -33,14 +33,12 @@ export class UI {
       bayConfigGroup: document.getElementById('bay-config-group'),
       raidSelect: document.getElementById('raid-select'),
       workloadSelect: document.getElementById('workload-select'),
-      expansionSelect: document.getElementById('expansion-select'),
       networkSelect: document.getElementById('network-select'),
       networkInfo: document.getElementById('network-info'),
       coolingSelect: document.getElementById('cooling-select'),
       fillStrategySelect: document.getElementById('fill-strategy-select'),
       fillDriveSelect: document.getElementById('fill-drive-select'),
       fillStrategyInfo: document.getElementById('fill-strategy-info'),
-      moduleInfo: document.getElementById('module-info'),
       drivePalette: document.getElementById('drive-palette'),
       statsPanel: document.getElementById('stats-panel'),
       fitnessPanel: document.getElementById('fitness-panel'),
@@ -59,7 +57,6 @@ export class UI {
     this._initBayConfigSelect();
     this._initRaidSelect();
     this._initWorkloadSelect();
-    this._initExpansionSelect();
     this._initNetworkSelect();
     this._initCoolingSelect();
     this._initFillControls();
@@ -70,7 +67,6 @@ export class UI {
     EventBus.on('state:change', () => this.refresh());
     EventBus.on('bay:update', () => this.refresh());
     EventBus.on('server:change', () => this.refresh());
-    EventBus.on('modules:change', () => this.refresh());
   }
 
   // === SERVER ===
@@ -116,7 +112,6 @@ export class UI {
       this.state.activeBayConfig = this._defaultBayConfig(server);
       this._rebuildBays();
       this._updateBayConfigSelect();
-      this._updateExpansionSelect();
       this._updateNetworkSelect();
       this._updateFillControls();
       this._updateDrivePaletteFilter();
@@ -239,55 +234,6 @@ export class UI {
       this._updateDrivePaletteFilter();
       EventBus.emit('workload:change');
     });
-  }
-
-  // === EXPANSION ===
-  _initExpansionSelect() {
-    const sel = this.els.expansionSelect;
-    if (!sel) return;
-    sel.innerHTML = `
-      <option value="none">No expansion</option>
-      <option value="nvme-card">Add M.2 NVMe PCIe card (+16 slots)</option>
-    `;
-    sel.addEventListener('change', () => {
-      const mod = this.state.moduleCatalog[0];
-      if (sel.value === 'nvme-card' && mod) {
-        if (!this.state.server) {
-          sel.value = 'none';
-          this.state.modules = [];
-          this._updateModuleInfo();
-          return;
-        }
-        const freeSlot = this.state.server.pcieSlotsRear?.find(s => !s.occupied && s.type === 'x16');
-        if (!freeSlot) {
-          sel.value = 'none';
-          this.state.modules = [];
-          this.els.moduleInfo.textContent = 'No free x16 PCIe slot available on this server.';
-          this.els.moduleInfo.className = 'text-xs text-red-400 mt-1 font-mono';
-          return;
-        }
-        this.state.modules = [mod];
-      } else {
-        this.state.modules = [];
-      }
-      this._rebuildBays();
-      this._updateModuleInfo();
-      this._updateFillControls();
-      this._updateDrivePaletteFilter();
-      EventBus.emit('modules:change');
-    });
-    this._updateExpansionSelect();
-  }
-
-  _updateExpansionSelect() {
-    const sel = this.els.expansionSelect;
-    if (!sel) return;
-    const hasFreeSlot = this.state.server?.pcieSlotsRear?.some(s => !s.occupied && s.type === 'x16');
-    sel.value = this.state.modules.length > 0 ? 'nvme-card' : 'none';
-    sel.disabled = !this.state.server;
-    const nvmeOption = sel.querySelector('option[value="nvme-card"]');
-    if (nvmeOption) nvmeOption.disabled = !!this.state.server && !hasFreeSlot;
-    this._updateModuleInfo();
   }
 
   // === NETWORK ===
@@ -503,30 +449,6 @@ export class UI {
     el.textContent = `${meta.name}: ${meta.detail} ${this._fillPreviewText()}`;
   }
 
-  _updateModuleInfo() {
-    const el = this.els.moduleInfo;
-    if (!el) return;
-    if (this.state.modules.length === 0) {
-      if (!this.state.server) {
-        el.textContent = 'Select a server to see compatible expansion options.';
-        el.className = 'text-xs text-gray-600 mt-1 font-mono';
-      } else {
-        const freeSlots = this.state.server.pcieSlotsRear?.filter(s => !s.occupied && s.type === 'x16').length || 0;
-        el.textContent = freeSlots > 0
-          ? `M.2 NVMe requires this expansion path · ${freeSlots} free x16 slot(s)`
-          : 'No free x16 PCIe slot for M.2 NVMe expansion';
-        el.className = `text-xs ${freeSlots > 0 ? 'text-gray-500' : 'text-gray-600'} mt-1 font-mono`;
-      }
-      return;
-    }
-    const mod = this.state.modules[0];
-    const hostGen = this.state.server?.pcieGen || 3;
-    const perf = mod.performanceByHostGen?.[hostGen];
-    el.innerHTML = `<span class="text-purple-400">NVMe PCIe expansion</span> · $${mod.priceUSD.toLocaleString()} · ${mod.provides.count} M.2 slots` +
-      (perf ? `<br><span class="${hostGen < 5 ? 'text-yellow-400' : 'text-green-400'}">${perf.note}</span>` : '');
-    el.className = 'text-xs mt-1 font-mono';
-  }
-
   // === DRIVE PALETTE ===
   _retailConsumerDrives() {
     return this.state.drives.filter(d => d.category === 'consumer' && d.priceUSD > 0);
@@ -613,10 +535,10 @@ export class UI {
     compatible.forEach(d => container.appendChild(this._createDriveCard(d, false)));
 
     if (incompatible.length > 0) {
-      if (this.state.server && this.state.modules.length === 0 && incompatible.some(d => d.formFactor === 'M.2 2280')) {
+      if (this.state.server && incompatible.some(d => d.formFactor === 'M.2 2280')) {
         const note = document.createElement('div');
         note.className = 'text-blue-300 text-xs p-2 rounded border border-blue-900/60 bg-blue-950/20 font-mono leading-relaxed mt-2';
-        note.textContent = 'M.2 NVMe SSDs need Expansion > Add M.2 NVMe PCIe card; the native server bays shown here are not M.2 slots.';
+        note.textContent = 'M.2 NVMe SSDs need a native M.2 NVMe server; the selected server bays are not M.2 slots.';
         container.appendChild(note);
       }
       const div = document.createElement('div');
@@ -637,7 +559,7 @@ export class UI {
       return 'No direct consumer-retail U.2 SSDs in this catalog. Consumer NVMe is mostly M.2; U.2 bays usually mean enterprise/datacenter drives.';
     }
     if (formFactors.has('M.2 2280')) {
-      return 'No compatible M.2 retail SSDs match this expansion or bay interface.';
+      return 'No compatible M.2 retail SSDs match this native M.2 bay interface.';
     }
     return 'No compatible consumer-retail SSDs match this server bay layout.';
   }

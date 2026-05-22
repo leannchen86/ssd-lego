@@ -149,6 +149,56 @@
     "notes": "Swiss-army-knife 2U. Multiple bay configs. EPYC 9005 dual-socket, 160 PCIe Gen5 lanes, 6TB DDR5 max."
   },
   {
+    "id": "ref-m2-nvme-8bay",
+    "name": "Reference M.2 NVMe Server",
+    "vendor": "Reference",
+    "formUnit": "2U",
+    "generation": "current",
+    "owned": false,
+    "cpu": "Single-socket EPYC/Intel class",
+    "pcieGen": 5,
+    "totalPcieLanes": 128,
+    "networkGbps": 100,
+    "bays": [
+      { "count": 8, "formFactor": "M.2 2280", "interface": "NVMe PCIe 5", "lanesPerDrive": 4, "hotSwap": false }
+    ],
+    "pcieSlotsRear": [
+      { "type": "x16", "gen": 5, "occupied": true, "note": "M.2 backplane/switch" }
+    ],
+    "maxBandwidthGBs": 112,
+    "realisticBandwidthRatio": 0.75,
+    "priceUSD": 8000,
+    "priceNote": "Reference M.2-native chassis",
+    "powerBaseW": 200,
+    "thermalDesign": "nvme-optimized",
+    "notes": "Native 8× M.2 2280 NVMe bays for consumer/prosumer M.2 drives. No add-in expansion card required; M.2 serviceability is worse than front hot-swap U.2/E3.S."
+  },
+  {
+    "id": "ref-m2-nvme-24bay",
+    "name": "High-Density M.2 NVMe Server",
+    "vendor": "Reference",
+    "formUnit": "2U",
+    "generation": "current",
+    "owned": false,
+    "cpu": "Dual-socket EPYC/Intel class",
+    "pcieGen": 5,
+    "totalPcieLanes": 160,
+    "networkGbps": 200,
+    "bays": [
+      { "count": 24, "formFactor": "M.2 2280", "interface": "NVMe PCIe 5", "lanesPerDrive": 4, "hotSwap": false }
+    ],
+    "pcieSlotsRear": [
+      { "type": "x16", "gen": 5, "occupied": true, "note": "M.2 backplane/switch fabric" }
+    ],
+    "maxBandwidthGBs": 336,
+    "realisticBandwidthRatio": 0.65,
+    "priceUSD": 18000,
+    "priceNote": "Reference dense M.2-native chassis",
+    "powerBaseW": 350,
+    "thermalDesign": "nvme-optimized",
+    "notes": "Native 24× M.2 2280 NVMe bays for dense consumer-M.2 what-if builds. Models a purpose-built M.2 chassis rather than a PCIe expansion card."
+  },
+  {
     "id": "dell-r7725xd",
     "name": "Dell PowerEdge R7725xd",
     "vendor": "Dell",
